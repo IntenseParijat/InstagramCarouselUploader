@@ -90,7 +90,7 @@ def process_group(
         return
     copy_caption(caption, logger)
     if not args.skip_instagram:
-        InstagramUploader(config.instagram, logger).upload_outputs([pair.output for pair in group])
+        InstagramUploader(config.browser, logger).upload_outputs([pair.output for pair in group])
     for pair in group:
         state.add(pair.original.name)
 

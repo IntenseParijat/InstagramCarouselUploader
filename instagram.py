@@ -4,10 +4,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, Page, sync_playwright
 
-from config import InstagramConfig
-from utils import resolve_chrome_user_data
+from browser_manager import BrowserManager
+from config import BrowserConfig
 
 CREATE_URL = "https://www.instagram.com/create/select/"
 
@@ -19,7 +19,7 @@ class InstagramAutomationError(RuntimeError):
 class InstagramUploader:
     """Automates selecting carousel files in Instagram without clicking Share."""
 
-    def __init__(self, config: InstagramConfig, logger: logging.Logger) -> None:
+    def __init__(self, config: BrowserConfig, logger: logging.Logger) -> None:
         self.config = config
         self.logger = logger
 
@@ -29,42 +29,28 @@ class InstagramUploader:
             raise InstagramAutomationError("No output images were provided")
         try:
             with sync_playwright() as playwright:
-                context = self._launch_context(playwright)
-                page = context.new_page()
-                page.goto(CREATE_URL, wait_until="domcontentloaded", timeout=60_000)
-                self.logger.info("Opened Instagram create page")
-                self._set_files(page, images)
-                self._advance_until_ready(page)
-                self.logger.info("Instagram upload is ready for manual caption paste and Share")
-                print(
-                    "\nReady!\n\n"
-                    "Caption copied to clipboard.\n\n"
-                    "Press CTRL+V inside Instagram.\n\n"
-                    "Click Share manually."
-                )
-                page.wait_for_timeout(2_000)
+                browser_manager = BrowserManager(self.config, self.logger)
+                context = browser_manager.context(playwright)
+                managed_page = browser_manager.instagram_page(context)
+                page = managed_page.page
+                try:
+                    page.goto(CREATE_URL, wait_until="domcontentloaded", timeout=60_000)
+                    self.logger.info("Opened Instagram create page")
+                    self._set_files(page, images)
+                    self._advance_until_ready(page)
+                    self.logger.info("Instagram upload is ready for manual caption paste and Share")
+                    print(
+                        "\nReady!\n\n"
+                        "Caption copied to clipboard.\n\n"
+                        "Press CTRL+V inside Instagram.\n\n"
+                        "Click Share manually."
+                    )
+                    page.wait_for_timeout(2_000)
+                finally:
+                    browser_manager.cleanup_page(managed_page)
         except PlaywrightError as exc:
             self.logger.exception("Playwright/Instagram automation failed")
             raise InstagramAutomationError(str(exc)) from exc
-
-    def _launch_context(self, playwright: object) -> BrowserContext:
-        chromium = playwright.chromium  # type: ignore[attr-defined]
-        if self.config.use_existing_chrome:
-            user_data = resolve_chrome_user_data(self.config.chrome_user_data)
-            if not user_data.exists():
-                raise InstagramAutomationError(f"Chrome user-data directory does not exist: {user_data}")
-            args = [f"--profile-directory={self.config.chrome_profile}"] if self.config.chrome_profile else []
-            self.logger.info("Launching Chrome profile at %s (%s)", user_data, self.config.chrome_profile)
-            return chromium.launch_persistent_context(
-                user_data_dir=str(user_data),
-                channel="chrome",
-                headless=False,
-                args=args,
-            )
-        profile = self.config.playwright_profile
-        profile.mkdir(parents=True, exist_ok=True)
-        self.logger.info("Launching Playwright persistent profile at %s", profile)
-        return chromium.launch_persistent_context(user_data_dir=str(profile), headless=False)
 
     def _set_files(self, page: Page, images: list[Path]) -> None:
         file_paths = [str(image.resolve()) for image in images]
