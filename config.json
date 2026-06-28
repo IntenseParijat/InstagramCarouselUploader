@@ -14,7 +14,7 @@
     "chrome_path": "C:/Program Files/Google/Chrome/Application/chrome.exe",
     "remote_debugging_port": 9222,
     "launch_if_needed": true,
-    "user_data_dir": "C:/Users/parij/AppData/Local/Google/Chrome/User Data",
+    "user_data_dir": "C:/Users/{username}/AppData/Local/Google/Chrome/User Data",
     "profile_directory": "Default",
     "automation_profile": "./playwright_profile"
   },
