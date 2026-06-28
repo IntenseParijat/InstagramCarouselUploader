@@ -18,9 +18,9 @@ class ConfigError(ValueError):
 class BrowserMode(str, Enum):
     """Supported browser launch/connect modes."""
 
+    ATTACH = "attach"
     CDP = "cdp"
     PERSISTENT = "persistent"
-    EPHEMERAL = "ephemeral"
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ def _env_or_value(value: str, env_name: str) -> str:
 
 def _browser_mode(value: Any) -> BrowserMode:
     try:
-        return BrowserMode(str(value or BrowserMode.CDP.value).lower())
+        return BrowserMode(str(value or BrowserMode.ATTACH.value).lower())
     except ValueError as exc:
         allowed = ", ".join(mode.value for mode in BrowserMode)
         raise ConfigError(f"browser.mode must be one of: {allowed}") from exc
@@ -120,10 +120,10 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         ),
         paths=PathsConfig(images=Path(str(paths.get("images", ""))).expanduser()),
         browser=BrowserConfig(
-            mode=_browser_mode(browser.get("mode", BrowserMode.CDP.value)),
+            mode=_browser_mode(browser.get("mode", BrowserMode.ATTACH.value)),
             chrome_path=str(browser.get("chrome_path", "")),
             remote_debugging_port=int(browser.get("remote_debugging_port", 9222)),
-            launch_if_needed=bool(browser.get("launch_if_needed", True)),
+            launch_if_needed=bool(browser.get("launch_if_needed", False)),
             user_data_dir=str(browser.get("user_data_dir", "")),
             profile_directory=str(browser.get("profile_directory", "Default")),
             automation_profile=Path(str(browser.get("automation_profile", "./playwright_profile"))).expanduser(),

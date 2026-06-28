@@ -1,6 +1,6 @@
 # GitHub → Instagram Carousel Uploader
 
-A production-quality Python 3.13 application that prepares Instagram carousel posts from paired screenshots. It uploads **only original images** to GitHub, builds raw download links, copies a caption to the clipboard, opens Instagram Create Post, uploads **only processed `*_output` images**, advances to the final review/caption screen, and stops before publishing.
+A Python 3.13 application that prepares Instagram carousel posts from paired screenshots. It uploads **only original images** to GitHub, builds raw download links, copies a caption to the clipboard, opens Instagram Create Post, and guides you through dragging the processed `*_output` images into Instagram.
 
 > This tool never clicks **Share**. You review, paste the caption, and publish manually.
 
@@ -14,8 +14,8 @@ A production-quality Python 3.13 application that prepares Instagram carousel po
 - Generates `raw.githubusercontent.com` URLs and optionally verifies HTTP 200 responses.
 - Builds captions from configured text, download header, raw URLs, and hashtags.
 - Copies captions to the Windows/system clipboard with `pyperclip`.
-- Uses Playwright file chooser APIs; it does not automate OS file dialogs.
-- Uses existing Chrome profile by default or a Playwright persistent profile when configured.
+- Defaults to **ATTACH** mode: no Playwright, no CDP, no Chrome launch, and no profile/cookie handling.
+- Keeps optional **CDP** and **PERSISTENT** modes for users who intentionally configure browser automation.
 - Splits more than 10 images into balanced carousel groups without hardcoded tables.
 - Maintains `processed.json` so completed originals can be skipped.
 - Writes detailed diagnostics to `upload.log`.
@@ -27,7 +27,8 @@ A production-quality Python 3.13 application that prepares Instagram carousel po
 main.py              CLI orchestration
 config.py            JSON/.env configuration and validation
 github_api.py        GitHub REST API upload/update client
-instagram.py         Playwright Instagram automation
+instagram.py         Instagram handoff and optional Playwright automation
+browser_manager.py   CDP connection and persistent-profile launch helpers
 pairing.py           Image scanning and pair matching
 grouping.py          Balanced carousel grouping
 clipboard.py         pyperclip wrapper
@@ -47,13 +48,18 @@ python -m venv .venv
 .venv\Scripts\activate  # Windows PowerShell/CMD users can activate the venv from .venv\Scripts
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-playwright install chrome
 ```
 
 On macOS/Linux, activate the virtual environment with:
 
 ```bash
 source .venv/bin/activate
+```
+
+Playwright is only required for `browser.mode` values of `cdp` or `persistent`. If you use one of those optional modes, also run:
+
+```bash
+playwright install chrome
 ```
 
 ## GitHub Token Setup
@@ -73,27 +79,100 @@ Environment variables override `github.token`, `github.owner`, and `github.repo`
 
 ## Configuration
 
-Edit [config.json](https://github.com/IntenseParijat/InstagramCarouselUploader/blob/main/config.py)
+Edit `config.json`.
 
-### Chrome Profile Setup
+### Browser Modes
 
-For best results, log in to Instagram in Chrome first, then close Chrome before running the app.
-
-Common Chrome user-data directories:
-
-- Windows: `C:/Users/<you>/AppData/Local/Google/Chrome/User Data`
-- macOS: `/Users/<you>/Library/Application Support/Google/Chrome`
-- Linux: `/home/<you>/.config/google-chrome`
-
-Set `chrome_profile` to the profile directory name, such as `Default`, `Profile 1`, or `Profile 2`.
-
-If you do not want to use your existing Chrome profile, set:
+The `browser.mode` setting supports three values:
 
 ```json
-"use_existing_chrome": false
+{
+  "browser": {
+    "mode": "attach"
+  }
+}
 ```
 
-The app will then use `instagram.playwright_profile` as a persistent browser profile.
+### ATTACH Mode (default)
+
+`attach` is the recommended workflow and the default in `config.json`.
+
+In this mode the app:
+
+1. Uploads originals to GitHub.
+2. Generates and copies the caption.
+3. Opens `https://www.instagram.com/create/select/` with the operating system's default browser.
+4. Opens the folder containing the current carousel's `*_output` images.
+5. Prints the exact output filenames.
+6. Waits for you to drag those files into Instagram and press `ENTER` in the terminal.
+
+ATTACH mode intentionally does **not** use Playwright, CDP, Chrome profile directories, cookies, or automated native file picker control. Browsers intentionally prevent websites from reading arbitrary local files, so manual drag-and-drop is the reliable handoff point.
+
+Example console prompt:
+
+```text
+Caption copied.
+
+Instagram opened.
+
+Output images:
+
+A_output.png
+B_output.png
+C_output.png
+
+Drag these images into Instagram.
+
+Press ENTER here when you're ready.
+```
+
+### CDP Mode
+
+`cdp` connects to an already-running Chrome instance that was explicitly started with remote debugging.
+
+The app first checks:
+
+```text
+http://127.0.0.1:9222/json/version
+```
+
+If the endpoint is unavailable, the app does **not** launch Chrome. It prints guidance like:
+
+```text
+Chrome isn't running with remote debugging.
+
+Run:
+
+chrome.exe
+--remote-debugging-port=9222
+
+or switch browser.mode to ATTACH.
+```
+
+To use CDP mode, close existing Chrome windows first and then start Chrome yourself with remote debugging enabled, for example:
+
+```bash
+chrome.exe --remote-debugging-port=9222
+```
+
+Starting `chrome.exe --remote-debugging-port=9222` while Chrome is already running usually forwards the request to the existing Chrome instance and does not open a debugging port.
+
+### Persistent Mode
+
+`persistent` launches a dedicated Playwright automation profile. It is only for automation-specific browser state and must never point at your daily Chrome profile.
+
+Use a separate path such as:
+
+```json
+{
+  "browser": {
+    "mode": "persistent",
+    "automation_profile": "C:/InstagramAutomationProfile"
+  }
+}
+```
+
+The app rejects obviously unsafe daily-profile paths such as `Default`, `Profile 1`, `Profile 2`, or a path inside the configured Chrome user-data directory.
 
 ## How to Run
 
@@ -133,7 +212,7 @@ folder/
   C_output.png
 ```
 
-Only `A.png`, `B.jpg`, and `C.png` are uploaded to GitHub. Only `A_output.png`, `B_output.webp`, and `C_output.png` are selected for Instagram.
+Only `A.png`, `B.jpg`, and `C.png` are uploaded to GitHub. Only `A_output.png`, `B_output.webp`, and `C_output.png` are handed off for Instagram.
 
 ## Carousel Splitting
 
@@ -154,20 +233,10 @@ For each balanced carousel group, the app:
 2. Verifies raw URLs if enabled.
 3. Builds a caption.
 4. Copies the caption to the clipboard.
-5. Opens `https://www.instagram.com/create/select/`.
-6. Uses Playwright's file chooser to upload output images.
-7. Clicks **Next** until the caption/review page is visible.
-8. Stops and prints:
-
-```text
-Ready!
-
-Caption copied to clipboard.
-
-Press CTRL+V inside Instagram.
-
-Click Share manually.
-```
+5. Opens Instagram according to `browser.mode`.
+6. In default ATTACH mode, opens the output folder and lists the current carousel's output images.
+7. Waits for you to drag the images into Instagram and press `ENTER`.
+8. Marks the group as processed and continues to the next carousel.
 
 ## Troubleshooting
 
@@ -185,14 +254,21 @@ Click Share manually.
 
 ### Instagram asks you to log in
 
-- Open Chrome manually with the configured profile and log in to Instagram.
-- Close Chrome completely, then rerun the app.
-- Verify `chrome_user_data` and `chrome_profile` are correct.
+- Use ATTACH mode and log in through your normal default browser.
+- If you use CDP mode, make sure the remote-debugging Chrome instance is logged in.
+- If you use persistent mode, log in once inside the dedicated automation profile.
+
+### CDP cannot connect
+
+- Confirm Chrome was started before the app with `--remote-debugging-port=9222`.
+- Confirm `http://127.0.0.1:9222/json/version` opens locally.
+- Do not expect a debugging port to appear if you run the command while a normal Chrome instance is already running.
+- Switch `browser.mode` back to `attach` for the recommended workflow.
 
 ### Browser profile is missing or locked
 
-- Close all Chrome windows using that profile.
-- Set `use_existing_chrome` to `false` to use the Playwright profile instead.
+- Prefer ATTACH mode, which uses your existing browser session without reading a profile directory.
+- For persistent mode, use a dedicated automation profile path, not your daily Chrome profile.
 
 ### Clipboard copy fails
 
@@ -201,7 +277,7 @@ Click Share manually.
 
 ### Playwright cannot find Chrome
 
-Run:
+Only CDP and persistent modes need Playwright browser support. Run:
 
 ```bash
 playwright install chrome
@@ -211,5 +287,6 @@ playwright install chrome
 
 - The application never uploads files ending in `_output` to GitHub.
 - The application never uploads originals to Instagram.
+- ATTACH mode never controls Chrome, cookies, profiles, CDP, or the native file picker.
 - The application never clicks Instagram's **Share** button.
 - Review every post manually before publishing.
