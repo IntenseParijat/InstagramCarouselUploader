@@ -11,7 +11,7 @@ from rich.progress import track
 
 from clipboard import copy_caption
 from config import AppConfig, ConfigError, load_config
-from github_api import GitHubClient
+from github_api import GitHubClient, UploadedFile
 from grouping import split_balanced
 from handoff import handoff_to_user
 from logging_utils import configure_logging
@@ -53,24 +53,50 @@ def filter_processed(
     return filtered
 
 
-def upload_or_build_urls(
+def upload_or_build_files(
     group: list[ImagePair],
     config: AppConfig,
     github: GitHubClient,
     args: argparse.Namespace,
     console: Console,
-) -> list[str]:
-    """Upload originals or build deterministic raw URLs when GitHub is skipped."""
-    urls: list[str] = []
+) -> list[UploadedFile]:
+    """Upload all originals before any RAW CDN verification runs."""
+    uploaded_files: list[UploadedFile] = []
     logger = logging.getLogger("carousel_uploader")
     logger.info("Uploading originals...")
     for pair in track(group, description="Uploading originals", console=console):
-        remote_path = f"{config.github.upload_folder}/{pair.original.name}" if config.github.upload_folder else pair.original.name
+        remote_path = github.github_path(pair.original)
         if args.skip_github or args.dry_run:
-            urls.append(github.raw_url(remote_path))
+            uploaded_files.append(
+                UploadedFile(
+                    local_path=pair.original,
+                    github_path=remote_path,
+                    raw_url=github.raw_url(remote_path),
+                    uploaded=False,
+                )
+            )
         else:
-            urls.append(github.upload_file(pair.original, verify=config.processing.verify_upload))
-    return urls
+            uploaded_files.append(github.upload_file(pair.original))
+    return uploaded_files
+
+
+def verify_uploaded_files(
+    uploaded_files: list[UploadedFile],
+    config: AppConfig,
+    github: GitHubClient,
+    args: argparse.Namespace,
+    console: Console,
+) -> None:
+    """Verify all uploaded RAW URLs after the upload batch has completed."""
+    logger = logging.getLogger("carousel_uploader")
+    if args.skip_github or args.dry_run or not config.verification.enabled:
+        logger.info("RAW URL verification skipped.")
+        return
+    logger.info("Verifying GitHub RAW URLs after batch upload...")
+    for uploaded_file in track(uploaded_files, description="Verifying RAW URLs", console=console):
+        if not uploaded_file.uploaded:
+            continue
+        github.verify_raw_url_with_retry(uploaded_file.raw_url, config.verification)
 
 
 def process_group(
@@ -85,8 +111,10 @@ def process_group(
     """Process one Instagram carousel group."""
     console.rule(f"[bold cyan]Carousel {index}: {len(group)} images")
     github = GitHubClient(config.github, config.processing.retry_count, logger)
-    raw_urls = upload_or_build_urls(group, config, github, args, console)
-    logger.info("Verified RAW URLs.")
+    uploaded_files = upload_or_build_files(group, config, github, args, console)
+    verify_uploaded_files(uploaded_files, config, github, args, console)
+    raw_urls = [uploaded_file.raw_url for uploaded_file in uploaded_files]
+    logger.info("RAW URL verification phase complete.")
     caption = build_caption(config.caption, raw_urls)
     if args.dry_run:
         console.print("[yellow]Dry run caption:[/yellow]\n" + caption)

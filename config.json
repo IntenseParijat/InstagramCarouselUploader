@@ -23,5 +23,13 @@
     "overwrite_github": true,
     "verify_upload": true,
     "retry_count": 3
+  },
+  "verification": {
+    "enabled": true,
+    "max_attempts": 12,
+    "initial_delay": 0.5,
+    "backoff": 1.7,
+    "timeout_seconds": 45,
+    "continue_on_timeout": true
   }
 }

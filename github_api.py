@@ -2,18 +2,29 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import logging
 from pathlib import Path
-from time import sleep
+from time import monotonic, sleep
 from urllib.parse import quote
 
 import requests
 
-from config import GitHubConfig
+from config import GitHubConfig, VerificationConfig
 
 
 class GitHubApiError(RuntimeError):
     """Raised when GitHub cannot complete an upload."""
+
+
+@dataclass(frozen=True)
+class UploadedFile:
+    """Result of uploading or planning one original image."""
+
+    local_path: Path
+    github_path: str
+    raw_url: str
+    uploaded: bool
 
 
 class GitHubClient:
@@ -46,10 +57,10 @@ class GitHubClient:
         if missing:
             raise GitHubApiError(f"Missing required GitHub config: {', '.join(missing)}")
 
-    def upload_file(self, path: Path, verify: bool = True) -> str:
-        """Create or update a file and return its raw.githubusercontent.com URL."""
+    def upload_file(self, path: Path) -> UploadedFile:
+        """Create or update a file and return upload metadata without RAW CDN verification."""
         self.validate_ready()
-        remote_path = f"{self.config.upload_folder}/{path.name}" if self.config.upload_folder else path.name
+        remote_path = self.github_path(path)
         api_url = self._contents_url(remote_path)
         raw_url = self.raw_url(remote_path)
         content = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -66,9 +77,12 @@ class GitHubClient:
         self.logger.info("GitHub upload response for %s: %s", path.name, response.status_code)
         if response.status_code not in {200, 201}:
             raise GitHubApiError(f"GitHub upload failed for {path.name}: {response.status_code} {response.text}")
-        if verify:
-            self.verify_raw_url(raw_url)
-        return raw_url
+        self.verify_contents_api(remote_path)
+        return UploadedFile(local_path=path, github_path=remote_path, raw_url=raw_url, uploaded=True)
+
+    def github_path(self, path: Path) -> str:
+        """Build the repository path for a local file."""
+        return f"{self.config.upload_folder}/{path.name}" if self.config.upload_folder else path.name
 
     def raw_url(self, remote_path: str) -> str:
         """Build a raw GitHub URL for a repository path."""
@@ -78,11 +92,60 @@ class GitHubClient:
             f"{self.config.branch}/{quoted_parts}"
         )
 
+    def verify_contents_api(self, remote_path: str) -> None:
+        """Confirm GitHub's Contents API can see an uploaded file."""
+        response = self._request_with_retries("GET", self._contents_url(remote_path), params={"ref": self.config.branch})
+        if response.status_code != 200:
+            raise GitHubApiError(
+                f"GitHub upload could not be confirmed via Contents API for {remote_path}: "
+                f"{response.status_code} {response.text}"
+            )
+        self.logger.info("GitHub upload confirmed via Contents API: %s", remote_path)
+
     def verify_raw_url(self, raw_url: str) -> None:
         """Ensure the raw URL is reachable before adding it to a caption."""
         response = self._request_with_retries("GET", raw_url)
         if response.status_code != 200:
             raise GitHubApiError(f"Raw URL verification failed: {response.status_code} {raw_url}")
+
+    def verify_raw_url_with_retry(self, raw_url: str, verification: VerificationConfig) -> bool:
+        """Wait for GitHub's eventually consistent RAW CDN to serve an uploaded file."""
+        deadline = monotonic() + verification.timeout_seconds
+        delay = verification.initial_delay
+        self.logger.info("Waiting for GitHub RAW CDN: %s", raw_url)
+        last_status: int | None = None
+        for attempt in range(1, verification.max_attempts + 1):
+            if monotonic() >= deadline:
+                return self._handle_raw_timeout(raw_url, last_status)
+            try:
+                response = self.session.get(raw_url, timeout=min(30, max(1, verification.timeout_seconds)))
+            except requests.RequestException as exc:
+                self.logger.info("Attempt %s/%s RAW CDN request failed: %s", attempt, verification.max_attempts, exc)
+                self._sleep_before_next_attempt(delay, deadline)
+                delay *= verification.backoff
+                continue
+            last_status = response.status_code
+            self.logger.info("Attempt %s/%s RAW CDN status: %s", attempt, verification.max_attempts, response.status_code)
+            if response.status_code == 200:
+                self.logger.info("Verified after %s attempts: %s", attempt, raw_url)
+                return True
+            if response.status_code == 404:
+                self.logger.info("GitHub RAW CDN has not propagated yet: %s", raw_url)
+                self._sleep_before_next_attempt(delay, deadline)
+                delay *= verification.backoff
+                continue
+            if response.status_code == 429:
+                retry_after = self._retry_after_seconds(response)
+                self.logger.info("RAW CDN rate limited; retrying after %.1f seconds", retry_after)
+                self._sleep_before_next_attempt(retry_after, deadline)
+                continue
+            if 500 <= response.status_code <= 599:
+                self.logger.info("RAW CDN server error; retrying: %s", response.status_code)
+                self._sleep_before_next_attempt(delay, deadline)
+                delay *= verification.backoff
+                continue
+            raise GitHubApiError(f"Raw URL verification failed: {response.status_code} {raw_url}")
+        return self._handle_raw_timeout(raw_url, last_status)
 
     def _contents_url(self, remote_path: str) -> str:
         quoted_path = "/".join(quote(part) for part in remote_path.split("/"))
@@ -115,3 +178,27 @@ class GitHubClient:
         if last_response is None:
             raise GitHubApiError(f"Request failed without response: {method} {url}")
         return last_response
+
+    def _handle_raw_timeout(self, raw_url: str, last_status: int | None) -> bool:
+        self.logger.warning(
+            "RAW CDN propagation timed out. GitHub upload confirmed. RAW CDN not yet propagated. Continuing. "
+            "Last status for %s: %s",
+            raw_url,
+            last_status,
+        )
+        return False
+
+    def _retry_after_seconds(self, response: requests.Response) -> float:
+        value = response.headers.get("Retry-After")
+        if not value:
+            return 1.0
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            return 1.0
+
+    def _sleep_before_next_attempt(self, delay: float, deadline: float) -> None:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return
+        sleep(min(delay, remaining))

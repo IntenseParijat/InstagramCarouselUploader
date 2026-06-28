@@ -20,7 +20,7 @@ A Python 3.13 command-line application that prepares Instagram carousel posts wh
 
 1. Run the application.
 2. The application uploads only the original screenshots to GitHub and overwrites existing files when needed.
-3. RAW GitHub URLs are generated and verified when verification is enabled.
+3. RAW GitHub URLs are generated after every original is uploaded, then verified as a batch so GitHub's eventually consistent RAW CDN has time to propagate.
 4. A caption is generated and copied to the clipboard.
 5. Instagram opens at `https://www.instagram.com/` in the system default browser.
 6. Windows Explorer opens with only the current carousel group's processed `*_output` screenshots selected.
@@ -98,6 +98,14 @@ Edit `config.json`:
     "overwrite_github": true,
     "verify_upload": true,
     "retry_count": 3
+  },
+  "verification": {
+    "enabled": true,
+    "max_attempts": 12,
+    "initial_delay": 0.5,
+    "backoff": 1.7,
+    "timeout_seconds": 45,
+    "continue_on_timeout": true
   }
 }
 ```
@@ -206,11 +214,11 @@ README.md         project documentation
 * Confirm `owner`, `repo`, and `branch` are correct.
 * Check `upload.log` for GitHub response codes and response bodies.
 
-### RAW URL verification fails
+### RAW URL verification waits
 
-* Confirm the repository and branch are public, or disable `verify_upload` if RAW URLs are not publicly reachable immediately.
+* Confirm the repository and branch are public, or disable `verification.enabled` if RAW URLs are not publicly reachable.
 * Confirm `upload_folder` does not contain leading or trailing slashes.
-* Retry after a short delay if GitHub RAW serving is briefly behind the Contents API response.
+* New uploads can return transient 404 responses from GitHub's RAW CDN even after the Contents API confirms the upload. The app now retries these responses and continues when propagation takes longer than the configured timeout.
 
 ### Instagram asks you to log in
 
