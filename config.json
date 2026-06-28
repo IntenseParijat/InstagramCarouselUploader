@@ -9,11 +9,14 @@
   "paths": {
     "images": ""
   },
-  "instagram": {
-    "use_existing_chrome": true,
-    "chrome_user_data": "",
-    "chrome_profile": "Default",
-    "playwright_profile": "./playwright_profile"
+  "browser": {
+    "mode": "cdp",
+    "chrome_path": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "remote_debugging_port": 9222,
+    "launch_if_needed": true,
+    "user_data_dir": "C:/Users/parij/AppData/Local/Google/Chrome/User Data",
+    "profile_directory": "Default",
+    "automation_profile": "./playwright_profile"
   },
   "caption": {
     "text": "",
