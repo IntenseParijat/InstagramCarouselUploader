@@ -10,10 +10,10 @@
     "images": ""
   },
   "browser": {
-    "mode": "cdp",
+    "mode": "attach",
     "chrome_path": "C:/Program Files/Google/Chrome/Application/chrome.exe",
     "remote_debugging_port": 9222,
-    "launch_if_needed": true,
+    "launch_if_needed": false,
     "user_data_dir": "C:/Users/{username}/AppData/Local/Google/Chrome/User Data",
     "profile_directory": "Default",
     "automation_profile": "./playwright_profile"
@@ -21,7 +21,11 @@
   "caption": {
     "text": "",
     "download_header": "Download original for wallpaper:",
-    "hashtags": ["#Wallpaper", "#Game", "#Screenshot"]
+    "hashtags": [
+      "#Wallpaper",
+      "#Game",
+      "#Screenshot"
+    ]
   },
   "processing": {
     "skip_processed": true,

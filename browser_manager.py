@@ -1,14 +1,9 @@
-"""Playwright browser connection and launch management."""
+"""Playwright browser connection and dedicated-profile launch management."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-import os
 from pathlib import Path
-import shutil
-import subprocess
-import sys
-import time
 from typing import Any
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -37,7 +32,6 @@ class BrowserManager:
         self.logger = logger
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
-        self._launched_process: subprocess.Popen[bytes] | None = None
 
     def context(self, playwright: Any) -> BrowserContext:
         """Return a BrowserContext for the configured browser mode."""
@@ -46,7 +40,7 @@ class BrowserManager:
             return self._connect_cdp(playwright)
         if self.config.mode == BrowserMode.PERSISTENT:
             return self._launch_persistent(playwright)
-        return self._launch_ephemeral(playwright)
+        raise ConfigError("ATTACH mode does not use Playwright. Use InstagramUploader.upload_outputs() for ATTACH handoff.")
 
     def instagram_page(self, context: BrowserContext) -> ManagedPage:
         """Reuse an existing Instagram tab or create a new application-owned page."""
@@ -67,20 +61,20 @@ class BrowserManager:
 
     def _connect_cdp(self, playwright: Any) -> BrowserContext:
         endpoint = self._cdp_endpoint()
+        version_url = f"{endpoint}/json/version"
         try:
-            return self._connect_to_endpoint(playwright, endpoint)
-        except Exception as exc:  # noqa: BLE001 - convert Playwright/network errors to config guidance.
-            self.logger.warning("CDP connection failed at %s: %s", endpoint, exc)
-            if not self._should_launch_chrome():
-                raise ConfigError(
-                    "Chrome is not running with remote debugging. Start Chrome with "
-                    f"--remote-debugging-port={self.config.remote_debugging_port} or enable browser.launch_if_needed."
-                ) from exc
-            chrome_path = self._find_chrome()
-            user_data_dir = resolve_chrome_user_data(self.config.user_data_dir)
-            self._launch_chrome(chrome_path, user_data_dir)
-            self._wait_for_cdp()
-            return self._connect_to_endpoint(playwright, endpoint)
+            with urlopen(version_url, timeout=2) as response:  # noqa: S310 - local Chrome CDP endpoint only.
+                if response.status != 200:
+                    raise ConfigError(f"Chrome remote debugging returned HTTP {response.status} at {version_url}")
+        except (URLError, TimeoutError, OSError) as exc:
+            raise ConfigError(
+                "Chrome isn't running with remote debugging.\n\n"
+                "Run:\n\n"
+                "chrome.exe\n"
+                f"--remote-debugging-port={self.config.remote_debugging_port}\n\n"
+                "or switch browser.mode to ATTACH."
+            ) from exc
+        return self._connect_to_endpoint(playwright, endpoint)
 
     def _connect_to_endpoint(self, playwright: Any, endpoint: str) -> BrowserContext:
         self.logger.info("Connecting to Chrome over CDP: %s", endpoint)
@@ -91,53 +85,12 @@ class BrowserManager:
         self.logger.info("Browser reuse active via CDP context")
         return self._context
 
-    def _should_launch_chrome(self) -> bool:
-        message = "Chrome is not running with remote debugging.\n\nStart it automatically?\n\n[Y/n] "
-        if self.config.launch_if_needed:
-            print(f"{message}Y")
-            return True
-        if not sys.stdin.isatty():
-            print(f"{message}n")
-            return False
-        answer = input(message).strip().lower()
-        return answer in {"", "y", "yes"}
-
-    def _launch_chrome(self, chrome_path: Path, user_data_dir: Path) -> None:
-        args = [
-            str(chrome_path),
-            f"--remote-debugging-port={self.config.remote_debugging_port}",
-            f"--user-data-dir={user_data_dir}",
-        ]
-        if self.config.profile_directory:
-            args.append(f"--profile-directory={self.config.profile_directory}")
-        self.logger.info("Launching Chrome for CDP: %s", " ".join(args))
-        self._launched_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    def _wait_for_cdp(self, timeout_seconds: int = 30) -> None:
-        version_url = f"{self._cdp_endpoint()}/json/version"
-        deadline = time.monotonic() + timeout_seconds
-        while time.monotonic() < deadline:
-            try:
-                with urlopen(version_url, timeout=2) as response:  # noqa: S310 - local Chrome CDP endpoint only.
-                    if response.status == 200:
-                        self.logger.info("CDP endpoint is available: %s", version_url)
-                        return
-            except URLError:
-                time.sleep(0.5)
-        raise ConfigError(f"Timed out waiting for Chrome remote debugging at {version_url}")
-
     def _launch_persistent(self, playwright: Any) -> BrowserContext:
         profile = self.config.automation_profile.expanduser()
         self._validate_automation_profile(profile)
         profile.mkdir(parents=True, exist_ok=True)
         self.logger.info("Launching dedicated Playwright persistent profile at %s", profile)
         self._context = playwright.chromium.launch_persistent_context(user_data_dir=str(profile), headless=False)
-        return self._context
-
-    def _launch_ephemeral(self, playwright: Any) -> BrowserContext:
-        self.logger.info("Launching temporary Chromium for testing")
-        self._browser = playwright.chromium.launch(headless=False)
-        self._context = self._browser.new_context()
         return self._context
 
     def _validate_automation_profile(self, profile: Path) -> None:
@@ -157,53 +110,6 @@ class BrowserManager:
                 )
         except FileNotFoundError:
             pass
-
-    def _find_chrome(self) -> Path:
-        configured = Path(self.config.chrome_path).expanduser() if self.config.chrome_path else None
-        if configured and configured.exists():
-            return configured
-        names = ["chrome", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
-        for name in names:
-            found = shutil.which(name)
-            if found:
-                return Path(found)
-        registry_path = self._find_chrome_in_registry()
-        if registry_path:
-            return registry_path
-        candidates = [
-            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Google/Chrome/Application/chrome.exe",
-            Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
-            Path.home() / "AppData/Local/Google/Chrome/Application/chrome.exe",
-            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-        raise ConfigError("Could not automatically locate Chrome. Set browser.chrome_path in config.json.")
-
-    def _find_chrome_in_registry(self) -> Path | None:
-        if os.name != "nt":
-            return None
-        import winreg
-
-        keys = [
-            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
-            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
-            (
-                winreg.HKEY_LOCAL_MACHINE,
-                r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
-            ),
-        ]
-        for root, key_path in keys:
-            try:
-                with winreg.OpenKey(root, key_path) as key:
-                    value, _ = winreg.QueryValueEx(key, None)
-            except OSError:
-                continue
-            candidate = Path(value)
-            if candidate.exists():
-                return candidate
-        return None
 
     def _cdp_endpoint(self) -> str:
         return f"http://127.0.0.1:{self.config.remote_debugging_port}"
