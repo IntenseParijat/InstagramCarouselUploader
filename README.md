@@ -73,39 +73,7 @@ Environment variables override `github.token`, `github.owner`, and `github.repo`
 
 ## Configuration
 
-Edit `config.json`:
-
-```json
-{
-  "github": {
-    "token": "",
-    "owner": "",
-    "repo": "",
-    "branch": "main",
-    "upload_folder": "screenshots"
-  },
-  "paths": {
-    "images": "C:/path/to/folder"
-  },
-  "instagram": {
-    "use_existing_chrome": true,
-    "chrome_user_data": "C:/Users/YOU/AppData/Local/Google/Chrome/User Data",
-    "chrome_profile": "Default",
-    "playwright_profile": "./playwright_profile"
-  },
-  "caption": {
-    "text": "Your custom caption",
-    "download_header": "Download original for wallpaper:",
-    "hashtags": ["#Wallpaper", "#Game", "#Screenshot"]
-  },
-  "processing": {
-    "skip_processed": true,
-    "overwrite_github": true,
-    "verify_upload": true,
-    "retry_count": 3
-  }
-}
-```
+Edit [config.json](https://github.com/IntenseParijat/InstagramCarouselUploader/blob/main/config.py)
 
 ### Chrome Profile Setup
 
