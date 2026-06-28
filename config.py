@@ -44,11 +44,22 @@ class ProcessingConfig:
 
 
 @dataclass(frozen=True)
+class VerificationConfig:
+    enabled: bool
+    max_attempts: int
+    initial_delay: float
+    backoff: float
+    timeout_seconds: float
+    continue_on_timeout: bool
+
+
+@dataclass(frozen=True)
 class AppConfig:
     github: GitHubConfig
     paths: PathsConfig
     caption: CaptionConfig
     processing: ProcessingConfig
+    verification: VerificationConfig
 
 
 def _require_mapping(data: dict[str, Any], key: str) -> dict[str, Any]:
@@ -74,6 +85,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
     paths = _require_mapping(data, "paths")
     caption = _require_mapping(data, "caption")
     processing = _require_mapping(data, "processing")
+    verification = data.get("verification", {})
+    if not isinstance(verification, dict):
+        raise ConfigError("Invalid 'verification' section in config.json")
 
     app_config = AppConfig(
         github=GitHubConfig(
@@ -94,6 +108,14 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
             overwrite_github=bool(processing.get("overwrite_github", True)),
             verify_upload=bool(processing.get("verify_upload", True)),
             retry_count=max(1, int(processing.get("retry_count", 3))),
+        ),
+        verification=VerificationConfig(
+            enabled=bool(verification.get("enabled", processing.get("verify_upload", True))),
+            max_attempts=max(1, int(verification.get("max_attempts", 12))),
+            initial_delay=max(0.0, float(verification.get("initial_delay", 0.5))),
+            backoff=max(1.0, float(verification.get("backoff", 1.7))),
+            timeout_seconds=max(1.0, float(verification.get("timeout_seconds", 45))),
+            continue_on_timeout=bool(verification.get("continue_on_timeout", True)),
         ),
     )
     validate_config(app_config)
