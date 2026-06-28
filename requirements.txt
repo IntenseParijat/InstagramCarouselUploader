@@ -1,0 +1,7 @@
+requests
+playwright
+rich
+pyperclip
+python-dotenv
+Pillow
+typing_extensions

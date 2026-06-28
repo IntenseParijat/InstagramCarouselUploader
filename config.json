@@ -1,0 +1,29 @@
+{
+  "github": {
+    "token": "",
+    "owner": "",
+    "repo": "",
+    "branch": "main",
+    "upload_folder": "screenshots"
+  },
+  "paths": {
+    "images": ""
+  },
+  "instagram": {
+    "use_existing_chrome": true,
+    "chrome_user_data": "",
+    "chrome_profile": "Default",
+    "playwright_profile": "./playwright_profile"
+  },
+  "caption": {
+    "text": "",
+    "download_header": "Download original for wallpaper:",
+    "hashtags": ["#Wallpaper", "#Game", "#Screenshot"]
+  },
+  "processing": {
+    "skip_processed": true,
+    "overwrite_github": true,
+    "verify_upload": true,
+    "retry_count": 3
+  }
+}
