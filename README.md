@@ -1,51 +1,50 @@
-# GitHub → Instagram Carousel Uploader
+# Instagram Carousel Uploader
 
-A Python 3.13 application that prepares Instagram carousel posts from paired screenshots. It uploads **only original images** to GitHub, builds raw download links, copies a caption to the clipboard, opens Instagram Create Post, and guides you through dragging the processed `*_output` images into Instagram.
-
-> This tool never clicks **Share**. You review, paste the caption, and publish manually.
+A Python 3.13 command-line application that prepares Instagram carousel posts while leaving the Instagram UI actions to you. It uploads original screenshots to GitHub, generates RAW download URLs, builds and copies captions, opens Instagram, and opens Windows Explorer with only the current carousel's processed `*_output` images selected.
 
 ## Features
 
-- Matches originals with `*_output` files while ignoring extension differences (`A.png` + `A_output.webp`).
-- Supports `png`, `jpg`, `jpeg`, and `webp`.
-- Logs missing originals or missing outputs and skips incomplete pairs.
-- Uploads originals to GitHub through the REST Contents API.
-- Updates existing GitHub files when they already exist.
-- Generates `raw.githubusercontent.com` URLs and optionally verifies HTTP 200 responses.
-- Builds captions from configured text, download header, raw URLs, and hashtags.
-- Copies captions to the Windows/system clipboard with `pyperclip`.
-- Defaults to **ATTACH** mode: no Playwright, no CDP, no Chrome launch, and no profile/cookie handling.
-- Keeps optional **CDP** and **PERSISTENT** modes for users who intentionally configure browser automation.
-- Splits more than 10 images into balanced carousel groups without hardcoded tables.
-- Maintains `processed.json` so completed originals can be skipped.
-- Writes detailed diagnostics to `upload.log`.
-- Provides `rich` console progress and status output.
+* Upload original screenshots to GitHub.
+* Automatically generate RAW URLs.
+* Automatically group screenshots into balanced Instagram carousel posts.
+* Automatically generate captions.
+* Automatically copy captions to clipboard.
+* Automatically open Instagram.
+* Automatically open Windows Explorer with only the processed `*_output` images selected.
+* Resume interrupted sessions.
+* Skip previously processed uploads.
+* Rich console output.
+* Comprehensive logging.
 
-## Project Structure
+## Workflow
 
-```text
-main.py              CLI orchestration
-config.py            JSON/.env configuration and validation
-github_api.py        GitHub REST API upload/update client
-instagram.py         Instagram handoff and optional Playwright automation
-browser_manager.py   CDP connection and persistent-profile launch helpers
-pairing.py           Image scanning and pair matching
-grouping.py          Balanced carousel grouping
-clipboard.py         pyperclip wrapper
-logging_utils.py     logging setup
-state.py             processed.json database
-utils.py             caption and path helpers
-config.json          example configuration
-processed.json       processed-file state
-requirements.txt     Python dependencies
-README.md            this guide
-```
+1. Run the application.
+2. The application uploads only the original screenshots to GitHub and overwrites existing files when needed.
+3. RAW GitHub URLs are generated and verified when verification is enabled.
+4. A caption is generated and copied to the clipboard.
+5. Instagram opens at `https://www.instagram.com/` in the system default browser.
+6. Windows Explorer opens with only the current carousel group's processed `*_output` screenshots selected.
+7. Drag the selected files into Instagram.
+8. Click through Instagram's flow, edit if desired, paste the caption, and share.
+9. Press `ENTER` in the terminal after the post has been successfully shared.
+10. The application marks the group as processed and continues with the next balanced carousel group.
+
+The app does not automate Instagram's DOM, file chooser, navigation, or publishing controls. You remain in control of every Instagram UI action.
 
 ## Installation
 
+### Requirements
+
+* Python 3.13
+* A GitHub Personal Access Token with repository contents read/write access
+* Windows for Explorer multi-file selection
+  * On macOS/Linux, the app falls back to opening the output folder because Windows Explorer selection is unavailable.
+
+### Setup
+
 ```bash
 python -m venv .venv
-.venv\Scripts\activate  # Windows PowerShell/CMD users can activate the venv from .venv\Scripts
+.venv\Scripts\activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
@@ -56,18 +55,14 @@ On macOS/Linux, activate the virtual environment with:
 source .venv/bin/activate
 ```
 
-Playwright is only required for `browser.mode` values of `cdp` or `persistent`. If you use one of those optional modes, also run:
+### GitHub Personal Access Token setup
 
-```bash
-playwright install chrome
-```
-
-## GitHub Token Setup
-
-1. Create a GitHub fine-grained token or classic PAT.
+1. Create a fine-grained GitHub token or classic PAT.
 2. Grant access to the target repository.
 3. Ensure the token can read and write repository contents.
-4. Put it in `config.json` as `github.token`, or preferably set it in `.env`:
+4. Put credentials in `.env` or `config.json`.
+
+Recommended `.env`:
 
 ```env
 GITHUB_TOKEN=ghp_your_token_here
@@ -79,102 +74,41 @@ Environment variables override `github.token`, `github.owner`, and `github.repo`
 
 ## Configuration
 
-Edit `config.json`.
-
-### Browser Modes
-
-The `browser.mode` setting supports three values:
+Edit `config.json`:
 
 ```json
 {
-  "browser": {
-    "mode": "attach"
+  "github": {
+    "token": "",
+    "owner": "",
+    "repo": "",
+    "branch": "main",
+    "upload_folder": "screenshots"
+  },
+  "paths": {
+    "images": "C:/path/to/screenshots"
+  },
+  "caption": {
+    "text": "Your caption text",
+    "download_header": "Download original for wallpaper:",
+    "hashtags": ["#Wallpaper", "#Game", "#Screenshot"]
+  },
+  "processing": {
+    "skip_processed": true,
+    "overwrite_github": true,
+    "verify_upload": true,
+    "retry_count": 3
   }
 }
 ```
 
-### ATTACH Mode (default)
+There is no browser configuration. The only browser action is:
 
-`attach` is the recommended workflow and the default in `config.json`.
-
-In this mode the app:
-
-1. Uploads originals to GitHub.
-2. Generates and copies the caption.
-3. Opens `https://www.instagram.com/create/select/` with the operating system's default browser.
-4. Opens the folder containing the current carousel's `*_output` images.
-5. Prints the exact output filenames.
-6. Waits for you to drag those files into Instagram and press `ENTER` in the terminal.
-
-ATTACH mode intentionally does **not** use Playwright, CDP, Chrome profile directories, cookies, or automated native file picker control. Browsers intentionally prevent websites from reading arbitrary local files, so manual drag-and-drop is the reliable handoff point.
-
-Example console prompt:
-
-```text
-Caption copied.
-
-Instagram opened.
-
-Output images:
-
-A_output.png
-B_output.png
-C_output.png
-
-Drag these images into Instagram.
-
-Press ENTER here when you're ready.
+```python
+webbrowser.open("https://www.instagram.com/")
 ```
 
-### CDP Mode
-
-`cdp` connects to an already-running Chrome instance that was explicitly started with remote debugging.
-
-The app first checks:
-
-```text
-http://127.0.0.1:9222/json/version
-```
-
-If the endpoint is unavailable, the app does **not** launch Chrome. It prints guidance like:
-
-```text
-Chrome isn't running with remote debugging.
-
-Run:
-
-chrome.exe
---remote-debugging-port=9222
-
-or switch browser.mode to ATTACH.
-```
-
-To use CDP mode, close existing Chrome windows first and then start Chrome yourself with remote debugging enabled, for example:
-
-```bash
-chrome.exe --remote-debugging-port=9222
-```
-
-Starting `chrome.exe --remote-debugging-port=9222` while Chrome is already running usually forwards the request to the existing Chrome instance and does not open a debugging port.
-
-### Persistent Mode
-
-`persistent` launches a dedicated Playwright automation profile. It is only for automation-specific browser state and must never point at your daily Chrome profile.
-
-Use a separate path such as:
-
-```json
-{
-  "browser": {
-    "mode": "persistent",
-    "automation_profile": "C:/InstagramAutomationProfile"
-  }
-}
-```
-
-The app rejects obviously unsafe daily-profile paths such as `Default`, `Profile 1`, `Profile 2`, or a path inside the configured Chrome user-data directory.
-
-## How to Run
+## Running
 
 ```bash
 python main.py
@@ -193,100 +127,106 @@ python main.py --verbose
 
 Flag behavior:
 
-- `--dry-run`: scans, groups, and prints captions without uploading or opening Instagram.
-- `--resume`: uses `processed.json` to skip completed originals.
-- `--force`: ignores `processed.json` and processes all matched pairs.
-- `--skip-github`: does not upload originals; still builds expected raw URLs.
-- `--skip-instagram`: uploads originals and copies captions but does not open Instagram.
-- `--verbose`: prints more console logs while always writing full logs to `upload.log`.
+* `--dry-run`: scans, groups, and prints captions without uploading, copying, or opening Instagram.
+* `--resume`: uses `processed.json` to skip completed originals.
+* `--force`: ignores `processed.json` and processes all matched pairs.
+* `--skip-github`: does not upload originals; still builds expected RAW URLs.
+* `--skip-instagram`: uploads originals and copies captions, but does not open Instagram or Explorer.
+* `--verbose`: prints more console logs while always writing detailed logs to `upload.log`.
 
-## Expected Folder Input
+## Expected project input
+
+Place originals and processed output images in the configured `paths.images` folder:
 
 ```text
-folder/
+screenshots/
   A.png
   A_output.png
   B.jpg
-  B_output.webp
-  C.png
-  C_output.png
+  B_output.png
+  C.webp
+  C_output.webp
 ```
 
-Only `A.png`, `B.jpg`, and `C.png` are uploaded to GitHub. Only `A_output.png`, `B_output.webp`, and `C_output.png` are handed off for Instagram.
+Only originals (`A.png`, `B.jpg`, `C.webp`) are uploaded to GitHub. Only matching output files (`A_output.png`, `B_output.png`, `C_output.webp`) are selected for the Instagram handoff.
 
-## Carousel Splitting
+## Captions
 
-Instagram allows up to 10 images. The app computes balanced groups automatically:
+Captions keep this format:
 
-- 11 → 6 + 5
-- 15 → 5 + 5 + 5
-- 22 → 8 + 7 + 7
-- 30 → 10 + 10 + 10
+```text
+{caption}
 
-The algorithm never exceeds 10 images per group.
+Download original for wallpaper:
 
-## Workflow Details
+url1
+url2
+url3
 
-For each balanced carousel group, the app:
+#hashtags
+```
 
-1. Uploads original files to GitHub or updates existing files.
-2. Verifies raw URLs if enabled.
-3. Builds a caption.
-4. Copies the caption to the clipboard.
-5. Opens Instagram according to `browser.mode`.
-6. In default ATTACH mode, opens the output folder and lists the current carousel's output images.
-7. Waits for you to drag the images into Instagram and press `ENTER`.
-8. Marks the group as processed and continues to the next carousel.
+The generated caption is automatically copied to the clipboard before Instagram opens.
+
+## Carousel grouping
+
+Instagram carousels allow up to 10 images. The app keeps the existing balanced grouping behavior:
+
+* 11 images → 6 + 5
+* 15 images → 5 + 5 + 5
+* 22 images → 8 + 7 + 7
+* 30 images → 10 + 10 + 10
+
+## Project structure
+
+```text
+main.py           CLI orchestration
+config.py         JSON/.env configuration and validation
+explorer.py       Windows Explorer output-image selection
+handoff.py        Instagram and user-confirmation handoff
+github_api.py     GitHub REST API upload/update client
+pairing.py        Image scanning and pair matching
+grouping.py       Balanced carousel grouping
+clipboard.py      pyperclip wrapper
+logging_utils.py  logging setup
+state.py          processed.json database
+utils.py          caption helpers
+config.json       example configuration
+processed.json    processed-file state
+requirements.txt  Python dependencies
+README.md         project documentation
+```
 
 ## Troubleshooting
 
 ### GitHub authentication fails
 
-- Confirm `GITHUB_TOKEN` or `github.token` is set.
-- Confirm the token has repository contents read/write access.
-- Confirm `owner`, `repo`, and `branch` are correct.
-- Check `upload.log` for GitHub response codes and messages.
+* Confirm `GITHUB_TOKEN` or `github.token` is set.
+* Confirm the token has repository contents read/write access.
+* Confirm `owner`, `repo`, and `branch` are correct.
+* Check `upload.log` for GitHub response codes and response bodies.
 
-### Raw URL verification fails
+### RAW URL verification fails
 
-- Confirm the repository and branch are public, or disable `verify_upload` if raw URLs are not publicly reachable immediately.
-- Confirm `upload_folder` does not contain leading/trailing slashes.
+* Confirm the repository and branch are public, or disable `verify_upload` if RAW URLs are not publicly reachable immediately.
+* Confirm `upload_folder` does not contain leading or trailing slashes.
+* Retry after a short delay if GitHub RAW serving is briefly behind the Contents API response.
 
 ### Instagram asks you to log in
 
-- Use ATTACH mode and log in through your normal default browser.
-- If you use CDP mode, make sure the remote-debugging Chrome instance is logged in.
-- If you use persistent mode, log in once inside the dedicated automation profile.
+* Log in through your normal default browser.
+* Re-run the application after the browser session is authenticated.
 
-### CDP cannot connect
+### Explorer does not select every output image
 
-- Confirm Chrome was started before the app with `--remote-debugging-port=9222`.
-- Confirm `http://127.0.0.1:9222/json/version` opens locally.
-- Do not expect a debugging port to appear if you run the command while a normal Chrome instance is already running.
-- Switch `browser.mode` back to `attach` for the recommended workflow.
-
-### Browser profile is missing or locked
-
-- Prefer ATTACH mode, which uses your existing browser session without reading a profile directory.
-- For persistent mode, use a dedicated automation profile path, not your daily Chrome profile.
+* Install dependencies with `python -m pip install -r requirements.txt` on Windows so `pywin32` is available.
+* If COM selection is unavailable, the app falls back to selecting the first output file and prints the complete filename list in the terminal.
 
 ### Clipboard copy fails
 
-- Install desktop clipboard support for your OS.
-- On Linux, `pyperclip` may require `xclip`, `xsel`, or a desktop session.
+* Ensure desktop clipboard support is available.
+* On Linux, `pyperclip` may require `xclip`, `xsel`, or a desktop session.
 
-### Playwright cannot find Chrome
+## Removed browser automation
 
-Only CDP and persistent modes need Playwright browser support. Run:
-
-```bash
-playwright install chrome
-```
-
-## Safety Notes
-
-- The application never uploads files ending in `_output` to GitHub.
-- The application never uploads originals to Instagram.
-- ATTACH mode never controls Chrome, cookies, profiles, CDP, or the native file picker.
-- The application never clicks Instagram's **Share** button.
-- Review every post manually before publishing.
+The project intentionally no longer includes Playwright, CDP mode, persistent browser profiles, remote debugging, cookies, DOM automation, file chooser automation, Instagram page automation, Chrome profile handling, or Playwright profile handling.
