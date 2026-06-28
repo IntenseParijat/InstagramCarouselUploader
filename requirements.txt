@@ -1,7 +1,6 @@
 requests
-playwright
 rich
 pyperclip
 python-dotenv
 Pillow
-typing_extensions
+pywin32; platform_system == "Windows"

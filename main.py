@@ -13,7 +13,7 @@ from clipboard import copy_caption
 from config import AppConfig, ConfigError, load_config
 from github_api import GitHubClient
 from grouping import split_balanced
-from instagram import InstagramUploader
+from handoff import handoff_to_user
 from logging_utils import configure_logging
 from pairing import ImagePair, scan_image_pairs
 from state import ProcessedState
@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", action="store_true", help="Use processed.json to skip completed originals")
     parser.add_argument("--force", action="store_true", help="Ignore processed.json and repost all matched pairs")
     parser.add_argument("--skip-github", action="store_true", help="Do not upload originals; generate raw URLs only")
-    parser.add_argument("--skip-instagram", action="store_true", help="Do not launch Instagram")
+    parser.add_argument("--skip-instagram", action="store_true", help="Do not open Instagram or Explorer")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose console logging")
     return parser.parse_args()
 
@@ -62,6 +62,8 @@ def upload_or_build_urls(
 ) -> list[str]:
     """Upload originals or build deterministic raw URLs when GitHub is skipped."""
     urls: list[str] = []
+    logger = logging.getLogger("carousel_uploader")
+    logger.info("Uploading originals...")
     for pair in track(group, description="Uploading originals", console=console):
         remote_path = f"{config.github.upload_folder}/{pair.original.name}" if config.github.upload_folder else pair.original.name
         if args.skip_github or args.dry_run:
@@ -84,15 +86,20 @@ def process_group(
     console.rule(f"[bold cyan]Carousel {index}: {len(group)} images")
     github = GitHubClient(config.github, config.processing.retry_count, logger)
     raw_urls = upload_or_build_urls(group, config, github, args, console)
+    logger.info("Verified RAW URLs.")
     caption = build_caption(config.caption, raw_urls)
     if args.dry_run:
         console.print("[yellow]Dry run caption:[/yellow]\n" + caption)
         return
     copy_caption(caption, logger)
+    logger.info("Caption copied.")
     if not args.skip_instagram:
-        InstagramUploader(config.browser, logger).upload_outputs([pair.output for pair in group])
+        handoff_to_user([pair.output for pair in group], logger)
+    else:
+        logger.info("Instagram handoff skipped by --skip-instagram")
     for pair in group:
         state.add(pair.original.name)
+    logger.info("Proceeding to next carousel...")
 
 
 def run() -> int:
