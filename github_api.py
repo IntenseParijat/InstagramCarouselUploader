@@ -60,25 +60,67 @@ class GitHubClient:
     def upload_file(self, path: Path) -> UploadedFile:
         """Create or update a file and return upload metadata without RAW CDN verification."""
         self.validate_ready()
+
         remote_path = self.github_path(path)
         api_url = self._contents_url(remote_path)
         raw_url = self.raw_url(remote_path)
+
         content = base64.b64encode(path.read_bytes()).decode("ascii")
         sha = self._get_existing_sha(api_url)
+
         payload = {
             "message": f"Upload {path.name}",
             "content": content,
             "branch": self.config.branch,
         }
+
         if sha:
             payload["sha"] = sha
 
-        response = self._request_with_retries("PUT", api_url, json=payload)
-        self.logger.info("GitHub upload response for %s: %s", path.name, response.status_code)
-        if response.status_code not in {200, 201}:
-            raise GitHubApiError(f"GitHub upload failed for {path.name}: {response.status_code} {response.text}")
-        self.verify_contents_api(remote_path)
-        return UploadedFile(local_path=path, github_path=remote_path, raw_url=raw_url, uploaded=True)
+        response = self._request_with_retries(
+            "PUT",
+            api_url,
+            json=payload,
+        )
+
+        self.logger.info(
+            "GitHub upload response for %s: %s",
+            path.name,
+            response.status_code,
+        )
+
+        if response.status_code not in (200, 201):
+            raise GitHubApiError(
+                f"GitHub upload failed for {path.name}: "
+                f"{response.status_code} {response.text}"
+            )
+
+        data = response.json()
+
+        content_info = data.get("content", {})
+
+        returned_path = str(content_info.get("path", ""))
+
+        returned_sha = str(content_info.get("sha", ""))
+
+        if returned_path.strip("/") != remote_path.strip("/"):
+            raise GitHubApiError(
+                f"GitHub returned unexpected path "
+                f"'{returned_path}' "
+                f"(expected '{remote_path}')"
+            )
+
+        self.logger.info(
+            "Upload confirmed. SHA=%s",
+            returned_sha,
+        )
+
+        return UploadedFile(
+            local_path=path,
+            github_path=remote_path,
+            raw_url=raw_url,
+            uploaded=True,
+        )
 
     def github_path(self, path: Path) -> str:
         """Build the repository path for a local file."""
@@ -91,16 +133,6 @@ class GitHubClient:
             f"https://raw.githubusercontent.com/{self.config.owner}/{self.config.repo}/"
             f"{self.config.branch}/{quoted_parts}"
         )
-
-    def verify_contents_api(self, remote_path: str) -> None:
-        """Confirm GitHub's Contents API can see an uploaded file."""
-        response = self._request_with_retries("GET", self._contents_url(remote_path), params={"ref": self.config.branch})
-        if response.status_code != 200:
-            raise GitHubApiError(
-                f"GitHub upload could not be confirmed via Contents API for {remote_path}: "
-                f"{response.status_code} {response.text}"
-            )
-        self.logger.info("GitHub upload confirmed via Contents API: %s", remote_path)
 
     def verify_raw_url(self, raw_url: str) -> None:
         """Ensure the raw URL is reachable before adding it to a caption."""
